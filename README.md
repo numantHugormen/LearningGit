@@ -1,7 +1,7 @@
 # LearningGit
 
-#text from website= \n
-##text from local \n
-###again from local 
+Text from website
+Text from local 
+Again from local 
 
 
