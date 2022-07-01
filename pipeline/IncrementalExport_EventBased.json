@@ -1,0 +1,111 @@
+{
+	"name": "IncrementalExport_EventBased",
+	"properties": {
+		"activities": [
+			{
+				"name": "GetTableDetails",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "SELECT [TableName] as [TABLE_NAME]\n      ,[CDCTableName] as [CDC_TABLE_NAME]\n      ,[ColumnNames] as [COLUMN_NAMES]\n      ,[LastProcessedFile] as [LAST_PROCESSED_FILE_NAME]\n  FROM [dbo].[SynapseToSQLTables]\n  WHERE PrimaryTableName = '@{pipeline().parameters.TABLE_SCHEMA}.@{last(split(pipeline().parameters.FolderPath, '/'))}'\n  AND STATUS = 1",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "Dest_SQL_Query",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": false
+				}
+			},
+			{
+				"name": "ForEachTable",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "GetTableDetails",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('GetTableDetails').output.value",
+						"type": "Expression"
+					},
+					"isSequential": false,
+					"activities": [
+						{
+							"name": "ExecuteIncremental",
+							"type": "ExecutePipeline",
+							"dependsOn": [],
+							"userProperties": [],
+							"typeProperties": {
+								"pipeline": {
+									"referenceName": "IncrementalExport_SQL",
+									"type": "PipelineReference"
+								},
+								"waitOnCompletion": true,
+								"parameters": {
+									"TABLE_NAME": {
+										"value": "@item().TABLE_NAME",
+										"type": "Expression"
+									},
+									"LAST_UPDATED_CDC_FILE": {
+										"value": "@{first(split(pipeline().parameters.FileName,'.'))}",
+										"type": "Expression"
+									},
+									"COLUMN_NAMES": {
+										"value": "@item().COLUMN_NAMES",
+										"type": "Expression"
+									},
+									"CDC_TABLE_NAME": {
+										"value": "@item().CDC_TABLE_NAME",
+										"type": "Expression"
+									},
+									"LAST_PROCESSED_FILE_NAME": {
+										"value": "@item().LAST_PROCESSED_FILE_NAME",
+										"type": "Expression"
+									}
+								}
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"FolderPath": {
+				"type": "string"
+			},
+			"FileName": {
+				"type": "string"
+			},
+			"TABLE_SCHEMA": {
+				"type": "string",
+				"defaultValue": "DBO"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL/EventBased"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-05-26T09:30:17Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

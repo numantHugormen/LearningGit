@@ -1,0 +1,184 @@
+{
+	"name": "IncrementalExport_SQL",
+	"properties": {
+		"activities": [
+			{
+				"name": "CDCCopy",
+				"type": "Copy",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "Select DML_Action, @{pipeline().parameters.COLUMN_NAMES}\n\t\tFROM \n\t\t(\n\t\t\tSELECT *, ROW_NUMBER() OVER (PARTITION BY RECID ORDER BY Start_LSN DESC) AS ROWNO FROM @{pipeline().parameters.CDC_TABLE_NAME}\nWHERE [$FileName] > '@{pipeline().parameters.LAST_PROCESSED_FILE_NAME}'  OR\n[$FileName] = '@{pipeline().parameters.LAST_UPDATED_CDC_FILE}' \n\t\t) AS X\n\t\tWHERE X.ROWNO = 1",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"sink": {
+						"type": "AzureSqlSink",
+						"preCopyScript": {
+							"value": "DROP TABLE IF EXISTS @{pipeline().parameters.CDC_TABLE_NAME}",
+							"type": "Expression"
+						},
+						"tableOption": "autoCreate",
+						"disableMetricsCollection": false
+					},
+					"enableStaging": false,
+					"translator": {
+						"type": "TabularTranslator",
+						"typeConversion": true,
+						"typeConversionSettings": {
+							"allowDataTruncation": true,
+							"treatBooleanAsNumber": false
+						}
+					}
+				},
+				"inputs": [
+					{
+						"referenceName": "Source_SQL_Query",
+						"type": "DatasetReference"
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "Dest_SQL_Table",
+						"type": "DatasetReference",
+						"parameters": {
+							"Schema": {
+								"value": "@{first(split(pipeline().parameters.CDC_TABLE_NAME,'.'))}",
+								"type": "Expression"
+							},
+							"Table": {
+								"value": "@{last(split(pipeline().parameters.CDC_TABLE_NAME,'.'))}",
+								"type": "Expression"
+							}
+						}
+					}
+				]
+			},
+			{
+				"name": "MergeCDC",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "CDCCopy",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[dbo].[MERGECDC]",
+					"storedProcedureParameters": {
+						"CDCTable": {
+							"value": {
+								"value": "@pipeline().parameters.CDC_TABLE_NAME",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"TargetTable": {
+							"value": {
+								"value": "@pipeline().parameters.TABLE_NAME",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "DestinationSQLDB",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "UpdateStatus",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "MergeCDC",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[dbo].[SetTableStatus]",
+					"storedProcedureParameters": {
+						"LAST_FILENAME": {
+							"value": {
+								"value": "@pipeline().parameters.LAST_UPDATED_CDC_FILE",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"Status": {
+							"value": "1",
+							"type": "Int32"
+						},
+						"TableName": {
+							"value": {
+								"value": "@pipeline().parameters.TABLE_NAME",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "DestinationSQLDB",
+					"type": "LinkedServiceReference"
+				}
+			}
+		],
+		"parameters": {
+			"TABLE_NAME": {
+				"type": "string"
+			},
+			"LAST_UPDATED_CDC_FILE": {
+				"type": "string"
+			},
+			"COLUMN_NAMES": {
+				"type": "string"
+			},
+			"CDC_TABLE_NAME": {
+				"type": "string"
+			},
+			"LAST_PROCESSED_FILE_NAME": {
+				"type": "string"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL/Main"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-05-26T09:30:16Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

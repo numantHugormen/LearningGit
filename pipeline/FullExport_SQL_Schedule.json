@@ -1,0 +1,68 @@
+{
+	"name": "FullExport_SQL_Schedule",
+	"properties": {
+		"activities": [
+			{
+				"name": "ForEachTable",
+				"type": "ForEach",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@split(pipeline().parameters.Tables,',')",
+						"type": "Expression"
+					},
+					"activities": [
+						{
+							"name": "ExecuteFullExportSQL",
+							"type": "ExecutePipeline",
+							"dependsOn": [],
+							"userProperties": [],
+							"typeProperties": {
+								"pipeline": {
+									"referenceName": "FullExport_SQL",
+									"type": "PipelineReference"
+								},
+								"waitOnCompletion": true,
+								"parameters": {
+									"TABLE_NAME": {
+										"value": "@item()",
+										"type": "Expression"
+									},
+									"TABLE_SCHEMA": {
+										"value": "@pipeline().parameters.TABLE_SCHEMA",
+										"type": "Expression"
+									},
+									"CDC_SCHEMA": {
+										"value": "@pipeline().parameters.CDC_SCHEMA",
+										"type": "Expression"
+									}
+								}
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"Tables": {
+				"type": "string",
+				"defaultValue": "CustGroup,CustTable"
+			},
+			"TABLE_SCHEMA": {
+				"type": "string",
+				"defaultValue": "DBO"
+			},
+			"CDC_SCHEMA": {
+				"type": "string",
+				"defaultValue": "CDC"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL/Scheduled"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-05-26T09:30:17Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

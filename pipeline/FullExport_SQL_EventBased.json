@@ -1,0 +1,61 @@
+{
+	"name": "FullExport_SQL_EventBased",
+	"properties": {
+		"activities": [
+			{
+				"name": "ExecuteFullExportSQL",
+				"type": "ExecutePipeline",
+				"dependsOn": [],
+				"userProperties": [],
+				"typeProperties": {
+					"pipeline": {
+						"referenceName": "FullExport_SQL",
+						"type": "PipelineReference"
+					},
+					"waitOnCompletion": true,
+					"parameters": {
+						"TABLE_NAME": {
+							"value": "@{first(split(pipeline().parameters.FileName,'.'))}",
+							"type": "Expression"
+						},
+						"TABLE_SCHEMA": {
+							"value": "@pipeline().parameters.TABLE_SCHEMA",
+							"type": "Expression"
+						},
+						"CDC_SCHEMA": {
+							"value": "@pipeline().parameters.CDC_SCHEMA",
+							"type": "Expression"
+						},
+						"PRIMARY_TABLE_NAME": {
+							"value": "@{pipeline().parameters.TABLE_SCHEMA}.@{first(split(pipeline().parameters.FileName,'.'))}",
+							"type": "Expression"
+						}
+					}
+				}
+			}
+		],
+		"parameters": {
+			"FileName": {
+				"type": "string",
+				"defaultValue": "CustGroup.cdm.json"
+			},
+			"TABLE_SCHEMA": {
+				"type": "string",
+				"defaultValue": "DBO"
+			},
+			"CDC_SCHEMA": {
+				"type": "string",
+				"defaultValue": "CDC"
+			},
+			"FolderPath": {
+				"type": "string"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL/EventBased"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-05-26T09:30:17Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

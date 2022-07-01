@@ -1,0 +1,274 @@
+{
+	"name": "FullExport_SQL",
+	"properties": {
+		"activities": [
+			{
+				"name": "PublishTables",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "GetMetadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[dbo].[publishTable]",
+					"storedProcedureParameters": {
+						"CDCTableName": {
+							"value": {
+								"value": "@{pipeline().parameters.CDC_SCHEMA}.@{activity('GetMetadata').output.firstRow.TABLE_NAME}",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"ColumnNames": {
+							"value": {
+								"value": "@activity('GetMetadata').output.firstRow.COLUMN_NAME",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"TableName": {
+							"value": {
+								"value": "@{pipeline().parameters.TABLE_SCHEMA}.@{activity('GetMetadata').output.firstRow.TABLE_NAME}",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"PrimaryTableName": {
+							"value": {
+								"value": "@{pipeline().parameters.TABLE_SCHEMA}.@{pipeline().parameters.PRIMARY_TABLE_NAME}",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "DestinationSQLDB",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "CopyFullDataSQL",
+				"type": "Copy",
+				"dependsOn": [
+					{
+						"activity": "PublishTables",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "Select @{activity('GetMetadata').output.firstRow.COLUMN_NAME} from @{pipeline().parameters.TABLE_SCHEMA}.@{activity('GetMetadata').output.firstRow.TABLE_NAME}",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"sink": {
+						"type": "AzureSqlSink",
+						"preCopyScript": {
+							"value": "DROP TABLE IF EXISTS @{pipeline().parameters.TABLE_SCHEMA}.@{activity('GetMetadata').output.firstRow.TABLE_NAME}",
+							"type": "Expression"
+						},
+						"tableOption": "autoCreate",
+						"disableMetricsCollection": false
+					},
+					"enableStaging": false,
+					"translator": {
+						"type": "TabularTranslator",
+						"typeConversion": true,
+						"typeConversionSettings": {
+							"allowDataTruncation": true,
+							"treatBooleanAsNumber": false
+						}
+					}
+				},
+				"inputs": [
+					{
+						"referenceName": "Source_SQL_Query",
+						"type": "DatasetReference"
+					}
+				],
+				"outputs": [
+					{
+						"referenceName": "Dest_SQL_Table",
+						"type": "DatasetReference",
+						"parameters": {
+							"Schema": {
+								"value": "@pipeline().parameters.TABLE_SCHEMA",
+								"type": "Expression"
+							},
+							"Table": {
+								"value": "@activity('GetMetadata').output.firstRow.TABLE_NAME",
+								"type": "Expression"
+							}
+						}
+					}
+				]
+			},
+			{
+				"name": "UpdateStatus",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "CreateRecIdIndex",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[dbo].[SetTableStatus]",
+					"storedProcedureParameters": {
+						"Status": {
+							"value": "1",
+							"type": "Int32"
+						},
+						"TableName": {
+							"value": {
+								"value": "@{pipeline().parameters.TABLE_SCHEMA}.@{activity('GetMetadata').output.firstRow.TABLE_NAME}",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"LAST_FILENAME": {
+							"value": null,
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "DestinationSQLDB",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "CreateRecIdIndex",
+				"type": "SqlServerStoredProcedure",
+				"dependsOn": [
+					{
+						"activity": "CopyFullDataSQL",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"storedProcedureName": "[dbo].[Create_RecId_Index]",
+					"storedProcedureParameters": {
+						"TableName": {
+							"value": {
+								"value": "@{activity('GetMetadata').output.firstRow.TABLE_NAME}",
+								"type": "Expression"
+							},
+							"type": "String"
+						},
+						"Schema": {
+							"value": {
+								"value": "@pipeline().parameters.TABLE_SCHEMA",
+								"type": "Expression"
+							},
+							"type": "String"
+						}
+					}
+				},
+				"linkedServiceName": {
+					"referenceName": "DestinationSQLDB",
+					"type": "LinkedServiceReference"
+				}
+			},
+			{
+				"name": "GetMetadata",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"source": {
+						"type": "AzureSqlSource",
+						"sqlReaderQuery": {
+							"value": "SELECT  TABLE_NAME\n       ,STUFF((SELECT ', ' + CAST(COLUMN_NAME AS VARCHAR(100)) [text()]\n         FROM INFORMATION_SCHEMA.COLUMNS \n         WHERE TABLE_NAME = t.TABLE_NAME and TABLE_SCHEMA = t.TABLE_SCHEMA\n\t\t and COLUMN_NAME not in ('$FileName','_SysRowId', 'LSN', 'LastProcessedChange_DateTime', 'DataLakeModified_DateTime')\n\t\t order by Ordinal_position Asc\n         FOR XML PATH(''), TYPE)\n        .value('.','NVARCHAR(MAX)'),1,2,' ') COLUMN_NAME\nFROM INFORMATION_SCHEMA.COLUMNS t\nWHERE TABLE_NAME = '@{pipeline().parameters.TABLE_NAME}'\nand  TABLE_SCHEMA = '@{pipeline().parameters.TABLE_SCHEMA}'\nGROUP BY TABLE_NAME, TABLE_SCHEMA",
+							"type": "Expression"
+						},
+						"queryTimeout": "02:00:00",
+						"partitionOption": "None"
+					},
+					"dataset": {
+						"referenceName": "Source_SQL_Query",
+						"type": "DatasetReference"
+					},
+					"firstRowOnly": true
+				}
+			}
+		],
+		"parameters": {
+			"TABLE_NAME": {
+				"type": "string",
+				"defaultValue": "CustGroup"
+			},
+			"TABLE_SCHEMA": {
+				"type": "string",
+				"defaultValue": "DBO"
+			},
+			"CDC_SCHEMA": {
+				"type": "string",
+				"defaultValue": "CDC"
+			},
+			"PRIMARY_TABLE_NAME": {
+				"type": "string"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL/Main"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-05-26T09:30:16Z"
+	},
+	"type": "Microsoft.DataFactory/factories/pipelines"
+}

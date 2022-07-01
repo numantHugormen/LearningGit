@@ -1,0 +1,9 @@
+{
+	"name": "tempdeletethiszoon",
+	"location": "eastus",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "c2738770-2029-4336-8ecc-09050d42e8d6",
+		"tenantId": "88204c7b-b787-4ddb-9568-9c4d220e2553"
+	}
+}

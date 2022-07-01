@@ -1,0 +1,19 @@
+{
+	"name": "Source_SQL_Query",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "SourceSqlDB",
+			"type": "LinkedServiceReference"
+		},
+		"folder": {
+			"name": "Source_SQL_Serverless"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": [],
+		"typeProperties": {
+			"schema": ""
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}
