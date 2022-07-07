@@ -98,7 +98,7 @@
 			},
 			"TABLE_SCHEMA": {
 				"type": "string",
-				"defaultValue": "DBO"
+				"defaultValue": "dbo"
 			}
 		},
 		"folder": {

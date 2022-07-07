@@ -1,0 +1,165 @@
+{
+	"name": "FullExport_SQL1",
+	"properties": {
+		"activities": [
+			{
+				"name": "ForEachTable",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "GetMetadata",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@activity('GetMetadata').output.value",
+						"type": "Expression"
+					},
+					"isSequential": false,
+					"batchCount": 10,
+					"activities": [
+						{
+							"name": "CopyFullDataSQL",
+							"type": "Copy",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "7.00:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [
+								{
+									"name": "TABLE_NAME",
+									"value": "item().TABLE_NAME"
+								}
+							],
+							"typeProperties": {
+								"source": {
+									"type": "AzureSqlSource",
+									"queryTimeout": "02:00:00",
+									"partitionOption": "None"
+								},
+								"sink": {
+									"type": "AzureSqlSink",
+									"preCopyScript": {
+										"value": "DROP TABLE IF EXISTS @{pipeline().parameters.TABLE_SCHEMA}.@{item().TABLE_NAME}",
+										"type": "Expression"
+									},
+									"tableOption": "autoCreate",
+									"disableMetricsCollection": false
+								},
+								"enableStaging": false,
+								"translator": {
+									"type": "TabularTranslator",
+									"typeConversion": true,
+									"typeConversionSettings": {
+										"allowDataTruncation": true,
+										"treatBooleanAsNumber": false
+									}
+								}
+							},
+							"inputs": [
+								{
+									"referenceName": "Source_SQL_Query",
+									"type": "DatasetReference"
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "Dest_SQL_Table2",
+									"type": "DatasetReference",
+									"parameters": {
+										"Schema": {
+											"value": "@pipeline().parameters.TABLE_SCHEMA",
+											"type": "Expression"
+										},
+										"Table": {
+											"value": "@item().TABLE_NAME",
+											"type": "Expression"
+										}
+									}
+								}
+							]
+						},
+						{
+							"name": "PostCopyScript",
+							"description": "Create Primary Index\nUpdate marker table",
+							"type": "Script",
+							"dependsOn": [
+								{
+									"activity": "CopyFullDataSQL",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "7.00:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"linkedServiceName": {
+								"referenceName": "DestSQL",
+								"type": "LinkedServiceReference"
+							},
+							"typeProperties": {
+								"scripts": [
+									{
+										"type": "Query",
+										"text": {
+											"value": "IF OBJECT_ID('dbo.SynapseToSQLTables', 'U') IS NULL\nCREATE TABLE [dbo].[SynapseToSQLTables](\n\t[TableName] [varchar](100) NOT NULL,\n\t[CDCTableName] [varchar](100) NULL,\n\t[ColumnNames] [varchar](8000) NULL,\n\t[Status] [int] NULL,\n\t[CreatedDateTime] [datetime] NULL,\n\t[ModifiedDateTime] [datetime] NULL,\n\t[LastProcessedFile] [varchar](200) NULL,\n CONSTRAINT [PK_TABLENAME] PRIMARY KEY CLUSTERED \n(\n\t[TableName] ASC\n)WITH (STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF) ON [PRIMARY]\n) ON [PRIMARY];\n\nDeclare @TableName varchar(100)= '@{pipeline().parameters.TABLE_SCHEMA}.@{item().TABLE_NAME}';\nDeclare @CDCTableName varchar(100)= '@{pipeline().parameters.TABLE_SCHEMA}._cdc_@{item().TABLE_NAME}';\nDeclare @ColumnNames varchar(8000) = '@{item().COLUMN_NAME}';\n\nIF EXISTS (SELECT 1 FROM dbo.SynapseToSQLTables where TableName = @TableName)\n\tBEGIN\n\t\tupdate dbo.SynapseToSQLTables set ColumnNames = @ColumnNames, Status= 0 , LastProcessedFile = '' , CreatedDateTime = getdate(), ModifiedDateTime = GETDATE()\n\t\twhere TableName = @TableName\n\tEND \nELSE \n\tBEGIN\n\t\tInsert into dbo.SynapseToSQLTables (TableName, CDCTableName,  LastProcessedFile, ColumnNames, [Status], CreatedDateTime, ModifiedDateTime)\n\t\tvalues (@TableName, @CDCTableName, '', @ColumnNames, 0,   getdate(), getdate() )\n\tEND\n\nDeclare @SQLNull nvarchar(300)=  FORMATMESSAGE('ALTER TABLE  %s ALTER COLUMN  RECID BIGINT NOT NULL;', '@{pipeline().parameters.TABLE_SCHEMA}.@{item().TABLE_NAME}');\n\nEXECUTE  sp_executesql  @SQLNull;\n\nDeclare @SQLIdx nvarchar(300)=  FORMATMESSAGE('ALTER TABLE %s  ADD CONSTRAINT PK_%s_RECID PRIMARY KEY CLUSTERED (RECID);', '@{pipeline().parameters.TABLE_SCHEMA}.@{item().TABLE_NAME}', '@{item().TABLE_NAME}' );\n\nEXECUTE  sp_executesql  @SQLIdx;\n\nupdate SynapseToSQLTables set Status = 1, LastProcessedFile = ''\nwhere TableName = @TableName",
+											"type": "Expression"
+										}
+									}
+								],
+								"logSettings": {
+									"logDestination": "ActivityOutput"
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"name": "GetMetadata",
+				"type": "Lookup",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"typeProperties": {
+					"firstRowOnly": false
+				}
+			}
+		],
+		"parameters": {
+			"TABLE_NAMES": {
+				"type": "string",
+				"defaultValue": "CustGroup,SalesLine"
+			},
+			"TABLE_SCHEMA": {
+				"type": "string",
+				"defaultValue": "DBO"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-03-08T09:23:34Z"
+	}
+}

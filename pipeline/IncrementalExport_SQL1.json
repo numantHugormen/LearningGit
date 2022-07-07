@@ -1,0 +1,220 @@
+{
+	"name": "IncrementalExport_SQL1",
+	"properties": {
+		"activities": [
+			{
+				"name": "GetLastChangedFeedFiles",
+				"type": "Script",
+				"dependsOn": [],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"linkedServiceName": {
+					"referenceName": "SourceSqlDB",
+					"type": "LinkedServiceReference"
+				},
+				"typeProperties": {
+					"scripts": [
+						{
+							"type": "Query",
+							"text": {
+								"value": "declare @Table_Name varchar(200) = '@{pipeline().parameters.TABLE_NAME}';\ndeclare @edsname varchar(200) = (select top 1 name from sys.external_data_sources\nwhere location like '%dfs.core.windows.net/dynamics365-financeandoperations%');\n\nDeclare @SQLQuery nvarchar(4000) = 'SELECT\n    r.filepath(1) AS [TABLE_NAME]\n\t,max(r.filepath(2)) AS [LAST_UPDATED_CDC_FILE]\nFROM OPENROWSET(\n    BULK ''ChangeFeed/*/*.csv'',\n        DATA_SOURCE = ''' + @edsname+''',\n        FORMAT = ''CSV'',\n        PARSER_VERSION = ''2.0'',\n        FIRSTROW = 1) \n\t\tWith(FirstColum nvarchar(100))\n\t\tas r\nWHERE (r.filepath(1) = '''+ @Table_Name +''' OR ''' + @Table_Name+ ''' = '''')\nGROUP BY\n    r.filepath(1)';\n\nEXECUTE  sp_executesql  @SQLQuery;",
+								"type": "Expression"
+							}
+						}
+					],
+					"logSettings": {
+						"logDestination": "ActivityOutput"
+					}
+				}
+			},
+			{
+				"name": "Filter_ChangedTables",
+				"type": "Script",
+				"dependsOn": [
+					{
+						"activity": "GetLastChangedFeedFiles",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"policy": {
+					"timeout": "7.00:00:00",
+					"retry": 0,
+					"retryIntervalInSeconds": 30,
+					"secureOutput": false,
+					"secureInput": false
+				},
+				"userProperties": [],
+				"linkedServiceName": {
+					"referenceName": "DestSQL",
+					"type": "LinkedServiceReference"
+				},
+				"typeProperties": {
+					"scripts": [
+						{
+							"type": "Query",
+							"text": {
+								"value": "declare @LastChangedFiles nvarchar(max) = '@{activity('GetLastChangedFeedFiles').output.resultSets[0].rows}';\ndeclare @publishedTables varchar(max) = replace(@LastChangedFiles, '\\', '')\n\n\nSELECT A.TableName as [TABLE_NAME]\n      ,A.CDCTableName as [CDC_TABLE_NAME]\n      ,A.ColumnNames as [COLUMN_NAMES]\n      ,A.LastProcessedFile as [LAST_PROCESSED_FILE_NAME]\n      ,B.LAST_UPDATED_CDC_FILE as [LAST_UPDATED_CDC_FILE]\n  FROM [dbo].[SynapseToSQLTables] A\n  join \n  (\n\tSELECT * \n\tFROM OPENJSON(@publishedTables, '$')\n\tWITH  (\n\t\t\tTABLE_NAME     varchar(200)             '$.TABLE_NAME',\n\t\t\tLAST_UPDATED_CDC_FILE   varchar(100) '$.LAST_UPDATED_CDC_FILE'\n\t\t )\n  ) as B on Substring(A.TABLENAME, charindex('.', A.TABLENAME)+1, len(A.TABLENAME))  = B.TABLE_NAME\nWHERE STATUS = 1\nand B.LAST_UPDATED_CDC_FILE > A.LastProcessedFile\n\n",
+								"type": "Expression"
+							}
+						}
+					],
+					"logSettings": {
+						"logDestination": "ActivityOutput"
+					}
+				}
+			},
+			{
+				"name": "ForEachTable",
+				"type": "ForEach",
+				"dependsOn": [
+					{
+						"activity": "Filter_ChangedTables",
+						"dependencyConditions": [
+							"Succeeded"
+						]
+					}
+				],
+				"userProperties": [],
+				"typeProperties": {
+					"items": {
+						"value": "@if(greater(activity('Filter_ChangedTables').output.resultSetCount,0) , activity('Filter_ChangedTables').output.resultSets[0].rows, variables('Empty'))",
+						"type": "Expression"
+					},
+					"batchCount": 10,
+					"activities": [
+						{
+							"name": "CDCCopy",
+							"type": "Copy",
+							"dependsOn": [],
+							"policy": {
+								"timeout": "7.00:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [
+								{
+									"name": "TABLE_NAME",
+									"value": "item().TABLE_NAME"
+								}
+							],
+							"typeProperties": {
+								"source": {
+									"type": "AzureSqlSource",
+									"sqlReaderQuery": {
+										"value": "Select DML_Action, @{item().COLUMN_NAMES}\n\t\tFROM \n\t\t(\n\t\t\tSELECT *, ROW_NUMBER() OVER (PARTITION BY RECID ORDER BY Start_LSN, Seq_Val, DataLakeModified_DateTime DESC) AS ROWNO FROM @{item().CDC_TABLE_NAME}\nWHERE [$FileName] > '@{item().LAST_PROCESSED_FILE_NAME}'  OR\n[$FileName] = '@{item().LAST_UPDATED_CDC_FILE}' \n\t\t) AS X\n\t\tWHERE X.ROWNO = 1",
+										"type": "Expression"
+									},
+									"queryTimeout": "02:00:00",
+									"partitionOption": "None"
+								},
+								"sink": {
+									"type": "AzureSqlSink",
+									"preCopyScript": {
+										"value": "DROP TABLE IF EXISTS @{item().CDC_TABLE_NAME}",
+										"type": "Expression"
+									},
+									"tableOption": "autoCreate",
+									"disableMetricsCollection": false
+								},
+								"enableStaging": false,
+								"translator": {
+									"type": "TabularTranslator",
+									"typeConversion": true,
+									"typeConversionSettings": {
+										"allowDataTruncation": true,
+										"treatBooleanAsNumber": false
+									}
+								}
+							},
+							"inputs": [
+								{
+									"referenceName": "Source_SQL_Query1",
+									"type": "DatasetReference"
+								}
+							],
+							"outputs": [
+								{
+									"referenceName": "Dest_SQL_Table1",
+									"type": "DatasetReference",
+									"parameters": {
+										"Schema": {
+											"value": "@{first(split(item().CDC_TABLE_NAME,'.'))}",
+											"type": "Expression"
+										},
+										"Table": {
+											"value": "@{last(split(item().CDC_TABLE_NAME,'.'))}",
+											"type": "Expression"
+										}
+									}
+								}
+							]
+						},
+						{
+							"name": "MergeData",
+							"type": "Script",
+							"dependsOn": [
+								{
+									"activity": "CDCCopy",
+									"dependencyConditions": [
+										"Succeeded"
+									]
+								}
+							],
+							"policy": {
+								"timeout": "7.00:00:00",
+								"retry": 0,
+								"retryIntervalInSeconds": 30,
+								"secureOutput": false,
+								"secureInput": false
+							},
+							"userProperties": [],
+							"linkedServiceName": {
+								"referenceName": "DestSQL",
+								"type": "LinkedServiceReference"
+							},
+							"typeProperties": {
+								"scripts": [
+									{
+										"type": "NonQuery",
+										"text": {
+											"value": "Declare @TargetTable nvarchar(200) = '@{item().TABLE_NAME}';\nDeclare @CDCTable nvarchar(200) ='@{item().CDC_TABLE_NAME}'\n\ndeclare @UpdateColumns nvarchar(max);\ndeclare @Columns nvarchar(max);\nSelect @UpdateColumns = COALESCE(@UpdateColumns + ', ', '') + 'T.' + x.COLUMN_NAME + ' = S.'  + x.COLUMN_NAME,\n  @Columns = COALESCE(@Columns + ', ', '')  + x.COLUMN_NAME \n from INFORMATION_SCHEMA.COLUMNS x \nWHERE TABLE_NAME = @TargetTable\nand  TABLE_SCHEMA = 'dbo'\n\nselect @UpdateColumns, @Columns\n\nDeclare @MergeStatement nvarchar(max);\n\nset @MergeStatement \n=  ' MERGE ' + @TargetTable + ' T USING '+ @CDCTable + ' S' + \n' ON T.RECID = S.RECID' +\n' WHEN MATCHED and S.DML_Action = ''AFTER_UPDATE''' +\n'    THEN UPDATE SET ' +\n @UpdateColumns +\n' WHEN NOT MATCHED BY TARGET THEN INSERT (' + \n@Columns +\n')\tValues (' +\n@Columns + \n')' +\n' WHEN MATCHED and S.DML_Action = ''DELETE''' +\n' THEN DELETE;'; \n\nExecute sp_executesql  @MergeStatement;\n\n\nupdate SynapseToSQLTables set Status = 1, LastProcessedFile = '@{item().LAST_UPDATED_CDC_FILE}'\nwhere TableName = @TargetTable;\n\n-- drop table at the end \ndrop table @{item().CDC_TABLE_NAME}",
+											"type": "Expression"
+										}
+									}
+								],
+								"logSettings": {
+									"logDestination": "ActivityOutput"
+								}
+							}
+						}
+					]
+				}
+			}
+		],
+		"parameters": {
+			"TABLE_NAME": {
+				"type": "string"
+			}
+		},
+		"variables": {
+			"Empty": {
+				"type": "Array"
+			}
+		},
+		"folder": {
+			"name": "DataLakeToSQL"
+		},
+		"annotations": [],
+		"lastPublishTime": "2022-03-08T09:27:55Z"
+	}
+}
